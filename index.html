@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blocky World - 3D Crafting & Boss Sandbox</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #canvas-3d { width: 100vw; height: 100vh; display: block; }
+        
+        /* Game UI Layout */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 20px; height: 20px; transform: translate(-50%, -50%);
+            color: #fff; font-size: 24px; font-weight: 300;
+            pointer-events: none; user-select: none;
+        }
+        
+        #hud {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0, 0, 0, 0.6); color: #fff;
+            padding: 15px; border-radius: 8px; border: 2px solid #555;
+            pointer-events: none; line-height: 1.6;
+        }
+
+        #hotbar {
+            position: absolute; bottom: 30px; left: 50%;
+            transform: translateX(-50%); display: flex;
+            background: rgba(40, 40, 40, 0.85); padding: 6px;
+            border-radius: 6px; border: 3px solid #666;
+        }
+
+        .slot {
+            width: 50px; height: 50px; margin: 0 4px;
+            border: 3px solid #444; border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-weight: bold; font-size: 12px; text-align: center;
+            background: #222; box-shadow: inset 0 0 8px rgba(0,0,0,0.8);
+        }
+
+        .slot.active { border-color: #fff; background: #555; }
+        
+        #boss-ui {
+            display: none; position: absolute; top: 20px; left: 50%;
+            transform: translateX(-50%); width: 400px;
+            background: rgba(0,0,0,0.8); padding: 10px;
+            border-radius: 5px; border: 2px solid #ff0055; text-align: center;
+        }
+        #boss-bar { width: 100%; height: 20px; background: #330011; border-radius: 3px; overflow: hidden; margin-top: 5px; }
+        #boss-hp { width: 100%; height: 100%; background: #ff0055; transition: width 0.2s; }
+        #boss-name { color: #ff0055; font-weight: bold; font-size: 18px; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+
+    <div id="crosshair">+</div>
+    
+    <div id="hud">
+        <h2 style="margin:0 0 5px 0; color: #4CAF50;">BLOCKY WORLD</h2>
+        <strong>Controls:</strong><br>
+        • Click Window to Lock Mouse Control<br>
+        • Move: W, A, S, D | Jump: Spacebar<br>
+        • Mine Block: Left Click<br>
+        • Place Block: Right Click<br>
+        • Slots 1-3: Swap Building Materials
+    </div>
+
+    <div id="boss-ui">
+        <div id="boss-name">THE VOID GOLIATH</div>
+        <div id="boss-bar"><div id="boss-hp"></div></div>
+    </div>
+
+    <div id="hotbar">
+        <div id="slot-1" class="slot active">1<br>Grass</div>
+        <div id="slot-2" class="slot">2<br>Stone</div>
+        <div id="slot-3" class="slot">3<br>Portal</div>
+    </div>
+
+    <canvas id="canvas-3d"></canvas>
+
+    <!-- Import reliable Three.js framework -->
+    <script src="https://cloudflare.com"></script>
+    <script>
+        const canvas = document.getElementById('canvas-3d');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); 
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.04);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.85);
+        dirLight.position.set(40, 80, 40);
+        scene.add(dirLight);
+
+        // Core Physics Arrays & Constants
+        const blocksArray = [];
+        const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        // Block Types
+        const materials = {
+            1: new THREE.MeshLambertMaterial({ color: 0x5a9e32 }), // Grass
+            2: new THREE.MeshLambertMaterial({ color: 0x7a7a7a }), // Stone
+            3: new THREE.MeshLambertMaterial({ color: 0x7b1fa2, emissive: 0x310c40 }) // Portal Core
+        };
+        let activeMaterialIndex = 1;
+
+        // Custom Procedural Terrain Generation
+        for (let x = -16; x <= 16; x++) {
+            for (let z = -16; z <= 16; z++) {
+                // Generate natural rolling hills using basic sine wave patterns
+                let height = Math.floor((Math.sin(x * 0.2) + Math.cos(z * 0.2)) * 1.5) + 2;
+                
+                for (let y = 0; y <= height; y++) {
+                    let mat = (y === height) ? materials[1] : materials[2];
+                    const block = new THREE.Mesh(blockGeometry, mat);
+                    block.position.set(x, y, z);
+                    block.userData = { type: (y === height) ? 1 : 2 };
+                    scene.add(block);
+                    blocksArray.push(block);
+                }
+            }
+        }
+
+        // Custom Boss Creation Engine (The Void Goliath)
+        let bossActive = false;
+        let bossMesh = null;
+        let bossHP = 100;
+        
+        function spawnVoidGoliath() {
+            if(bossActive) return;
+            bossActive = true;
+            document.getElementById('boss-ui').style.display = 'block';
+            
+            // Create a giant 3-headed black/purple custom monstrosity
+            const group = new THREE.Group();
+            
+            const bodyMat = new THREE.MeshLambertMaterial({ color: 0x111111, emissive: 0x220022 });
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0055 });
+            
+            const body = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 3), bodyMat);
+            body.position.y = 2;
+            group.add(body);
+            
+            // Generate 3 unique floating heads
+            for(let i = -1; i <= 1; i++) {
+                const head = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), bodyMat);
+                head.position.set(i * 1.5, 4.5, 0);
+                
+                const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), eyeMat);
+                eyeL.position.set(i * 1.5 - 0.3, 4.6, 0.6);
+                const eyeR = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), eyeMat);
+                eyeR.position.set(i * 1.5 + 0.3, 4.6, 0.6);
+                
+                group.add(head, eyeL, eyeR);
+            }
+            
+            group.position.set(0, 5, -10);
+            scene.add(group);
+            bossMesh = group;
+        }
+
+        // First Person Variables
+        camera.position.set(0, 6, 8);
+        let moveF = false, moveB = false, moveL = false, moveR = false, jumping = false;
+        let velY = 0;
+        let yaw = 0, pitch = 0;
+        const raycaster = new THREE.Raycaster();
+        const mouseCenter = new THREE.Vector2(0, 0);
+
+        // Lock mouse pointer to browser frame
+        canvas.addEventListener('click', () => canvas.requestPointerLock());
+
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === canvas) {
+                yaw -= e.movementX * 0.0025;
+                pitch -= e.movementY * 0.0025;
+                pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+                
+                const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+                const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+                camera.quaternion.copy(qy).multiply(qx);
+            }
+        });
+
+        // Track Hotbar Selections
+        document.addEventListener('keydown', (e) => {
+            if (['1', '2', '3'].includes(e.key)) {
+                document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+                activeMaterialIndex = parseInt(e.key);
+                document.getElementById(`slot-${e.key}`).classList.add('active');
+            }
+            if (e.key === 'w' || e.key === 'W') moveF = true;
+            if (e.key === 's' || e.key === 'S') moveB = true;
+            if (e.key === 'a' || e.key === 'A') moveL = true;
+            if (e.key === 'd' || e.key === 'D') moveR = true;
+            if (e.key === ' ' && !jumping) { velY = 0.16; jumping = true; }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'w' || e.key === 'W') moveF = false;
+            if (e.key === 's' || e.key === 'S') moveB = false;
+            if (e.key === 'a' || e.key === 'A') moveL = false;
+            if (e.key === 'd' || e.key === 'D') moveR = false;
+        });
+
+        // Mouse click triggers: Left (Destroy) & Right (Build)
+        window.addEventListener('mousedown', (e) => {
+            if (document.pointerLockElement !== canvas) return;
+            
+            raycaster.setFromCamera(mouseCenter, camera);
+            
+            // Check if user hit the Boss first
+            if (bossActive && bossMesh) {
+                const bossIntersects = raycaster.intersectObjects(bossMesh.children);
+                if (bossIntersects.length > 0) {
+                    bossHP -= 10;
+                    document.getElementById('boss-hp').style.width = bossHP + '%';
+                    if (bossHP <= 0) {
+                        scene.remove(bossMesh);
+                        bossActive = false;
+                        document.getElementById('boss-ui').style.display = 'none';
+                        alert("VICTORY! You defeated the Void Goliath inside Blocky World!");
+                    }
+                    return;
+                }
+            }
+
